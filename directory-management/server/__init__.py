@@ -89,12 +89,16 @@ class Server:
 
     def on_new_client(self,clientsocket, addr):
         while True:
-            msg = clientsocket.recv(1024)
-            if not self.is_channel_availble:
-                print("closing the connection for the client {}:{}".format(addr[0], addr[1]))
+            try:
+                msg = clientsocket.recv(1024)
+                if not self.is_channel_availble:
+                    print("closing the connection for the client {}:{}".format(addr[0], addr[1]))
+                    break
+                self.add_to_server_log(msg.decode())
+                new_message_from_server = "server: "+msg.decode()
+                clientsocket.send(new_message_from_server.encode())
+            except ConnectionResetError:
+                print("Remote client closed the connection")
                 break
-            self.add_to_server_log(msg.decode())
-            new_message_from_server = "server: "+msg.decode()
-            clientsocket.send(new_message_from_server.encode())
         clientsocket.close()
 

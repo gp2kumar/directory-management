@@ -9,9 +9,8 @@ class Client:
         self.host = '127.0.0.1'
         self.port = 65432
         self.client = None
-        self.client_channel = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # self.client_channel.connect((self.host, self.port))
-        # self.is_channel_availble = True
+
+
 
     def run(self):
         self.start_ui()
@@ -75,10 +74,13 @@ class Client:
         self.sync.place(x=620, y=259)
 
     def connect_controller(self):
-        pass
+        self.client_channel = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_channel.connect((self.host, self.port))
+        self.client_channel.sendall(self.client_user_name.get("1.0",'end-1c').encode())
+        self.is_channel_availble = True
 
     def disconnect_controller(self):
-        pass
+        self.client_channel.close()
 
     def create_directory_controller(self):
         pass
