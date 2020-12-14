@@ -1,8 +1,9 @@
-from tkinter import Tk, Label, Frame, Text, Button, messagebox, ttk, simpledialog
+from tkinter import Tk, Label, Frame, Text, Button, messagebox, ttk, simpledialog, IntVar, LEFT, Scrollbar, W, VERTICAL, RIGHT, Y,FALSE
 import os
 import socket
 import re
 import json
+import tempfile
 
 class Client:
 
@@ -23,9 +24,15 @@ class Client:
                                        "UNDO_SUCCESS": "Undo Success",
                                        "NOTHING_TO_UNDO": "Nothing to Undo",
                                        "DIRECTORY_RENAME_SUCCESS": "Renamed Successfully",
-                                       "DIRECTORY_RENAME_FAILED": "Renaming Directory Failed"
+                                       "DIRECTORY_RENAME_FAILED": "Renaming Directory Failed",
+                                       "SYNC_SUCCESS": "local directory sync success",
+                                       "MOVE_SUCCESS": "successfully moved the directory",
+                                       "MOVE_FAIL": "Unable to move the file"
                                        }
         self.nodes = dict()
+
+        if not os.path.exists(os.path.join(tempfile.gettempdir(), "client")):
+            os.mkdir(os.path.join(tempfile.gettempdir(), "client"))
 
     def run(self):
         self.start_ui()
@@ -36,7 +43,7 @@ class Client:
     def start_ui(self):
         self.configure_client_layout()
         self.attach_user_input_frame()
-        self.attach_directory_viewer()
+        # self.attach_directory_viewer()
         self.attach_client_controls()
 
     def configure_client_layout(self):
@@ -133,6 +140,9 @@ class Client:
 
     def connect_controller(self):
         self.user_name = self.client_user_name.get("1.0",'end-1c')
+        self.file_system = os.path.join(tempfile.gettempdir(), "client", self.user_name)
+        if not os.path.exists(self.file_system):
+            os.mkdir(self.file_system)
         special_characters_pattern = re.compile('[@_!#$%^&*()<>?/\|}{~:]')
         if special_characters_pattern.search(self.user_name):
             self.client_log_area.configure(text=self.server_message_decoder["USERNAME_SPECIAL_CHARACTERS"])
@@ -146,8 +156,8 @@ class Client:
             print(details)
             if details["STATUS"] == 'CONNECTED':
                 self.client_log_area.configure(text=self.server_message_decoder[details["STATUS"]])
-                self.insert_node('', details["DATA"][0])
-                self.tree.bind('<<TreeviewOpen>>', self.open_node)
+                # self.insert_node('', details["DATA"][0])
+                # self.tree.bind('<<TreeviewOpen>>', self.open_node)
                 self.is_channel_availble = True
             else:
                 self.client_log_area.configure(text=self.server_message_decoder[details["STATUS_MESSAGE"]])
@@ -161,11 +171,11 @@ class Client:
     def create_directory_controller(self):
         directory_name = simpledialog.askstring(title="",
                                           prompt="Enter the directory name")
-        node = self.tree.focus()
-        parent_directory = self.nodes[node]['full_path']
+        # node = self.tree.focus()
+        # parent_directory = self.nodes[node]['full_path']
         message = {}
         message['TYPE'] = 'CREATE_DIRECTORY'
-        message['directory_to_be_created'] = os.path.join(parent_directory, directory_name)
+        message['directory_to_be_created'] = directory_name.split("/")
         data = b''
         try:
             self.client_channel.sendall(json.dumps(message).encode())
@@ -181,11 +191,13 @@ class Client:
             self.client_log_area.configure(text=self.server_message_decoder["DIRECTORY_CREATION_FAILED"])
 
     def delete_directory_controller(self):
-        node = self.tree.focus()
-        directory = self.nodes[node]['full_path']
+        # node = self.tree.focus()
+        # directory = self.nodes[node]['full_path']
+        directory_name = simpledialog.askstring(title="",
+                                                prompt="Enter the directory name")
         message = {}
         message['TYPE'] = 'DELETE_DIRECTORY'
-        message['directory_to_be_deleted'] = directory
+        message['directory_to_be_deleted'] = directory_name.split("/")
         data = b''
         try:
             self.client_channel.sendall(json.dumps(message).encode())
@@ -201,14 +213,16 @@ class Client:
             self.client_log_area.configure(text=self.server_message_decoder["DIRECTORY_DELETION_FAILED"])
 
     def rename_directory_controller(self):
-        node = self.tree.focus()
-        directory = self.nodes[node]['full_path']
+        # node = self.tree.focus()
+        # directory = self.nodes[node]['full_path']
+        directory = simpledialog.askstring(title="",
+                                                    prompt="Enter the existing directory name")
         new_directory_name = simpledialog.askstring(title="",
                                                 prompt="Enter the new directory name")
         if new_directory_name:
             message = {}
             message['TYPE'] = 'RENAME_DIRECTORY'
-            message['directory'] = directory
+            message['directory'] = directory.split("/")
             message['directory_to_be_renamed'] = new_directory_name
             data = b''
             try:
@@ -225,10 +239,79 @@ class Client:
                 self.client_log_area.configure(text=self.server_message_decoder["DIRECTORY_RENAME_FAILED"])
 
     def move_directory_controller(self):
-        pass
+
+        source_path = simpledialog.askstring(title="Directory Management System",
+                                          prompt="Enter the source path")
+        destination_path = simpledialog.askstring(title="Directory Management System",
+                                             prompt="Enter the Destination path")
+
+        source = source_path.split("/")
+        destination = destination_path.split("/")
+        print (source, destination)
+
+        message = {}
+        message["TYPE"] = "MOVE"
+        message["source"] = source
+        message["destination"] = destination
+
+        try:
+            self.client_channel.sendall(json.dumps(message).encode())
+            data = self.client_channel.recv(1024)
+            message_details = json.loads(data)
+            print (message_details)
+            if message_details["STATUS"] == "SUCCESS":
+                self.client_log_area.configure(text=self.server_message_decoder["MOVE_SUCCESS"])
+            else:
+                self.client_log_area.configure(text=self.server_message_decoder["MOVE_FAIL"])
+        except OSError:
+            self.client_log_area.configure(text=self.server_message_decoder["SERVER_NOT_AVAILBLE"])
+            return
 
     def sync_controller(self):
-        pass
+
+        message = {}
+        message["TYPE"] = "DIRECTORY_DETAILS"
+        message["DIRECTORY_PATH"] = ""
+
+        try:
+            self.client_channel.sendall(json.dumps(message).encode())
+            data = self.client_channel.recv(1024)
+            message_details = json.loads(data)
+            availble_folders = [file["display_name"] for file in message_details]
+        except OSError:
+            self.client_log_area.configure(text=self.server_message_decoder["SERVER_NOT_AVAILBLE"])
+            return
+
+        file_selection_popup = Tk()
+
+        def sync_contents(folder):
+            message = {}
+            message["TYPE"] = "SYNC"
+            message["from_directory"] = folder
+            message["to_directory"] = os.path.join(self.file_system, folder+"_local")
+            if not os.path.exists(os.path.join(self.file_system, folder+"_local")):
+                os.mkdir(os.path.join(self.file_system, folder+"_local"))
+            try:
+                self.client_channel.sendall(json.dumps(message).encode())
+                data = self.client_channel.recv(1024)
+                message_details = json.loads(data)
+                print(message_details)
+                if message_details["STATUS"] == "SUCCESS":
+                    self.client_log_area.configure(text=self.server_message_decoder["SYNC_SUCCESS"])
+            except OSError:
+                self.client_log_area.configure(text=self.server_message_decoder["SERVER_NOT_AVAILBLE"])
+                return
+            file_selection_popup.destroy()
+
+        Label(file_selection_popup,
+              text="""Choose Directory to sync:""",
+              justify=LEFT,
+              padx=20).pack()
+
+        for folder in availble_folders:
+            Button(file_selection_popup,
+                   text=folder,
+                   command=lambda folder=folder: sync_contents(folder)).pack(anchor=W)
 
     def undo_controller(self):
         message = {}

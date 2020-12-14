@@ -18,7 +18,10 @@ class Server:
         self.is_channel_availble = True
         self.connected_users = {}
         self.server_actions = {}
-        self.file_system = tempfile.gettempdir()
+        self.file_system = os.path.join(tempfile.gettempdir(), "server")
+        self.synced_folders = {}
+        if not os.path.exists(self.file_system):
+            os.mkdir(self.file_system)
 
     def run(self):
         self.start_ui()
@@ -37,6 +40,7 @@ class Server:
         self.configure_server_layout()
         self.attach_log_frame()
         self.attach_connected_clients_frame()
+        self.attach_synced_clients_frame()
         self.attach_exit_button()
 
     def attach_log_frame(self):
@@ -51,6 +55,12 @@ class Server:
         self.connected_clients_log = Text(frame, state='disabled', width=25, height=10)
         self.connected_clients_log.place(x=535, y=50)
 
+    def attach_synced_clients_frame(self):
+        frame = Frame(self.server, width=250, height=600).place(x=510, y=310)
+        Label(frame, text='Synced Clients', font='Helvetica 14 bold').place(x=550, y=250)
+        self.synced_clients_log = Text(frame, state='disabled', width=25, height=10)
+        self.synced_clients_log.place(x=535, y=280)
+
     def attach_exit_button(self):
         frame = Frame(self.server, width=200, height=200, bg="#ccc").place(x=510, y=650)
         self.exit_server = Button(frame, text="Exit Server", width=12, height=3, font='Helvetica 11 bold', command=self.close_server_connection)
@@ -61,6 +71,12 @@ class Server:
         self.server_log.delete("1.0", END)
         self.server_log.insert("1.0",text+'\n')
         self.server_log.configure(state='disabled')
+
+    def add_to_sync_log(self, text):
+        self.synced_clients_log.configure(state='normal')
+        self.synced_clients_log.delete("1.0", END)
+        self.synced_clients_log.insert("1.0", text + '\n')
+        self.synced_clients_log.configure(state='disabled')
 
     def clear_server_actions(self):
         self.server_actions.clear()
@@ -85,6 +101,8 @@ class Server:
             self.connected_users.clear()
             self.populate_connected_devices_log()
             self.clear_server_actions()
+            self.synced_folders.clear()
+            self.add_to_sync_log("")
 
     def start_listening(self):
         listener = threading.Thread(target=self.start_serving_as_server)
@@ -139,6 +157,7 @@ class Server:
                                  "is_child_availble": bool([x for x in os.listdir(os.path.join(self.file_system, user))])
                                  }],
                        "STATUS": "CONNECTED"}
+            self.synced_folders[user] = []
             clientsocket.send(json.dumps(details).encode())
 
         while True:
@@ -153,43 +172,49 @@ class Server:
                     incoming_message = json.loads(msg.decode())
                 else:
                     break
+
                 if incoming_message.get("TYPE") == 'DIRECTORY_DETAILS':
                     directory_details = self.get_directory_details(incoming_message["DIRECTORY_PATH"])
                     clientsocket.send(json.dumps(directory_details).encode())
                 elif incoming_message.get("TYPE") == 'CREATE_DIRECTORY':
+                    print(incoming_message)
                     try:
-                        os.mkdir(incoming_message["directory_to_be_created"])
+                        directory_to_be_created = os.path.join(self.file_system, user, *(incoming_message["directory_to_be_created"]))
+                        os.mkdir(directory_to_be_created)
                     except FileExistsError:
                         pass
 
                     message = {}
                     message['STATUS'] = 'FAIL'
-                    if os.path.exists(incoming_message["directory_to_be_created"]):
-                        actions = {'command': 'os.mkdir("{}")'.format(incoming_message["directory_to_be_created"]),
-                                   'log_message': '{} : {} created successfully'.format(user, incoming_message[
-                                       "directory_to_be_created"]),
+                    if os.path.exists(directory_to_be_created):
+                        actions = {'command': 'os.mkdir("{}")'.format(directory_to_be_created),
+                                   'log_message': '{} : {} created successfully'.format(user, directory_to_be_created),
                                    'redo_command': 'shutil.rmtree(r"{}")'.format(
-                                       incoming_message["directory_to_be_created"])}
+                                       directory_to_be_created)}
                         self.server_actions[user].append(actions)
+                        self.sync_data()
                         message['STATUS'] = 'SUCCESS'
 
                     clientsocket.send(json.dumps(message).encode())
                 elif incoming_message.get("TYPE") == 'DELETE_DIRECTORY':
-                    shutil.rmtree(incoming_message["directory_to_be_deleted"])
+                    directory_to_be_deleted = os.path.join(self.file_system, user,
+                                                           *(incoming_message["directory_to_be_deleted"]))
+                    shutil.rmtree(directory_to_be_deleted)
                     message = {}
                     message['STATUS'] = 'FAIL'
-                    if not os.path.exists(incoming_message["directory_to_be_deleted"]):
-                        actions = {'command': 'shutil.rmtree("{}")'.format(
-                                       incoming_message["directory_to_be_deleted"]),
-                                   'log_message': '{} : {} deleted successfully'.format(user, incoming_message[
-                                       "directory_to_be_deleted"]),
-                                   'redo_command': 'os.mkdir(r"{}")'.format(incoming_message["directory_to_be_deleted"])}
+                    if not os.path.exists(directory_to_be_deleted):
+                        actions = {'command': 'shutil.rmtree("{}")'.format(directory_to_be_deleted),
+                                   'log_message': '{} : {} deleted successfully'.format(user, directory_to_be_deleted),
+                                   'redo_command': 'os.mkdir(r"{}")'.format(directory_to_be_deleted)}
                         self.server_actions[user].append(actions)
+                        self.sync_data()
                         message['STATUS'] = 'SUCCESS'
 
                     clientsocket.send(json.dumps(message).encode())
                 elif incoming_message.get("TYPE") == 'RENAME_DIRECTORY':
                     p = incoming_message.get("directory")
+                    p = os.path.join(self.file_system, user,
+                                                           *p)
                     parent_directory = os.path.dirname(p)
                     existing_directory = os.path.basename(p)
                     new_name = incoming_message.get("directory_to_be_renamed")
@@ -203,27 +228,62 @@ class Server:
                                    'log_message': '{} renamed to {} deleted successfully'.format(old_directory, new_directory),
                                    'redo_command': 'os.rename(r"{}", r"{}")'.format(new_directory, old_directory)}
                         self.server_actions[user].append(actions)
+                        self.sync_data()
                         message['STATUS'] = 'SUCCESS'
 
                     clientsocket.send(json.dumps(message).encode())
                 elif incoming_message.get("TYPE") == 'UNDO':
                     message = {}
+                    print("-->undoing for user {}<--".format(user))
                     if self.server_actions[user]:
                         last_action = self.server_actions[user].pop()
                         exec(last_action['redo_command'])
                         message['STATUS'] = 'SUCCESS'
-                        # if not os.path.exists(incoming_message["directory_to_be_deleted"]):
-                        #     actions = {'command': 'shutil.rmtree({})'.format(
-                        #                    incoming_message["directory_to_be_deleted"]),
-                        #                'log_message': '{} : {} deleted successfully'.format(user, incoming_message[
-                        #                    "directory_to_be_deleted"]),
-                        #                'redo_command': 'os.mkdir({})'.format(incoming_message["directory_to_be_deleted"])}
-                        #     self.server_actions[user].append(actions)
-                        #     message['STATUS'] = 'SUCCESS'
+                        self.sync_data()
                     else:
                         message['STATUS'] = 'NOTHING_TO_UNDO'
+                    # print("after undo action {}".format(self.server_actions[user]))
 
                     clientsocket.send(json.dumps(message).encode())
+                elif incoming_message.get("TYPE") == 'SYNC':
+                    src = os.path.join(self.file_system, incoming_message["from_directory"])
+                    target = incoming_message["to_directory"]
+
+                    self.synced_folders[user].append({"src":src, "target": target})
+                    # shutil.rmtree(target)
+                    # shutil.copytree(src, target)
+                    txt = ""
+                    for user in self.synced_folders:
+                        for contents in self.synced_folders[user]:
+                            basename = os.path.basename(contents['target'])
+                            txt = txt + "user ({}) syncing home directory of {} \n".format(user, basename[:-6])
+                    self.add_to_sync_log(txt)
+                    self.sync_data()
+                    message = {}
+                    message['STATUS'] = 'SUCCESS'
+                    clientsocket.send(json.dumps(message).encode())
+                elif incoming_message.get("TYPE") == 'MOVE':
+                    message = {}
+                    source = os.path.join(self.file_system, user, *incoming_message['source'])
+                    actual_source = os.path.dirname(source)
+                    destination = os.path.join(self.file_system, user, *incoming_message['destination'])
+                    try:
+                        message["STATUS"] = "FAIL"
+                        if not os.path.exists(source):
+                            message["STATUS"] = "FAIL"
+                        else:
+                            new_destination = shutil.move(source, destination)
+                            message["STATUS"] = "SUCCESS"
+                            actions = {'command': 'shutil.move({}, {})'.format(source, destination),
+                                       'log_message': '{} moved to {} deleted successfully'.format(source,
+                                                                                                     destination),
+                                       'redo_command': 'shutil.move(r"{}", r"{}")'.format(new_destination, actual_source)}
+                            self.server_actions[user].append(actions)
+                            message['STATUS'] = 'SUCCESS'
+                    except Exception as e:
+                        print ("exception while moving file - {}".format(str(e)))
+                    finally:
+                        clientsocket.send(json.dumps(message).encode())
 
                 log_message = ""
                 for user in self.server_actions:
@@ -245,6 +305,24 @@ class Server:
             del self.connected_users[user]
         self.populate_connected_devices_log()
 
+        if user in self.synced_folders:
+            del self.synced_folders[user]
+        txt = ""
+        for user in self.synced_folders:
+            for contents in self.synced_folders[user]:
+                basename = os.path.basename(contents['target'])
+                txt = txt + "user ({}) syncing home directory of {} \n".format(user, basename[:-6])
+        self.add_to_sync_log(txt)
+
+    def sync_data(self):
+        if self.synced_folders:
+            for user in self.synced_folders:
+                for sync_folder in self.synced_folders[user]:
+                    src = sync_folder["src"]
+                    target = sync_folder["target"]
+                    shutil.rmtree(target)
+                    shutil.copytree(src, target)
+
     def populate_connected_devices_log(self):
         connected_users = ""
         for user, address in self.connected_users.items():
@@ -252,6 +330,8 @@ class Server:
         self.add_to_connected_clients_log(connected_users)
 
     def get_directory_details(self, directory):
+        if len(directory) == 0:
+            directory = self.file_system
         directory_contents = []
         for file in os.listdir(directory):
             file_details = {}
