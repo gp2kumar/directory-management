@@ -1,7 +1,7 @@
 # Directory Management
 
 ## Directory management is a simple client-server model tool to do directory management, completly works on sockets
-####Pre-requisites & Conditions:
+#### Pre-requisites & Conditions:
 * Python should be installed in both client & server
 * Sockets should be open
 * At any point of time, you connect to only 3 clients
@@ -9,7 +9,7 @@
 * User can do undo only last performed operation
 
 
-####Note:
+#### Note:
 * Client sync is written in an ugly way
 * ignore tests folder, these are written for POC 
 
